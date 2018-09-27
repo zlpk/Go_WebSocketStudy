@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"github.com/gorilla/websocket"
 	"net/http"
+	"./impl"
+	"time"
 )
 
 var (
@@ -21,8 +23,9 @@ var (
 func wsHandler(w http.ResponseWriter, r *http.Request) {
 	var (
 		wsConn *websocket.Conn
+		data []byte
 		err    error
-		data   []byte
+		conn *impl.Connection
 	)
 
 	// http 升级为 websocket
@@ -33,23 +36,40 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("建立 WebSocket 连接成功!")
 	}
 
-	// 循环接收消息并将接收到的消息原样发回去
+	// 封装 websocket
+	if conn,err = impl.InitConnection(wsConn);err != nil {
+		goto ERR
+	}
+
+	// 心跳协程，每 1 秒给客户端发送一个心跳包，同时也说明封装是线程安全的
+	go func() {
+		var (
+			err error
+		)
+		for {
+			if err = conn.WriteMessage([]byte("heart beat"));err != nil {
+				return
+			}
+			time.Sleep(1 * time.Second)
+		}
+	}()
+
+	// 循环将客户端发来的消息发送回去
 	for {
-		if _,data,err = wsConn.ReadMessage(); err != nil {
+		if data,err = conn.ReadMessage();err != nil {
 			goto ERR
-		} else {
-			fmt.Printf("接收客户端消息：%s\n", data)
 		}
 
-		if err = wsConn.WriteMessage(websocket.TextMessage, data); err != nil {
+		fmt.Printf("接收客户端消息：%s\n", data)
+
+		if err = conn.WriteMessage(data);err != nil {
 			goto ERR
 		}
 	}
 
-// 错误处理
 ERR:
-	fmt.Println("关闭 WebSocket 连接!")
-	wsConn.Close()
+	conn.Close()
+	fmt.Println("连接关闭！")
 }
 
 func main()  {
